@@ -1,0 +1,37 @@
+# Vendored tract-linalg 0.21.4 (MIT OR Apache-2.0, https://github.com/sonos/tract)
+# Patched by Eclipse Core: Apple AMX kernels disabled (they crash with SIGILL on newer
+# Apple chips / macOS releases). Standard ARM NEON kernels are used instead.
+[package]
+name = "tract-linalg"
+version = "0.21.4"
+license = "MIT OR Apache-2.0"
+edition = "2021"
+autobenches = false
+autotests = false
+
+[dependencies]
+derive-new = "0.5.9"
+downcast-rs = "1.2.0"
+dyn-clone = "1.0.4"
+lazy_static = "1.4.0"
+log = "0.4.14"
+num-traits = "0.2.14"
+paste = "1.0.5"
+scan_fmt = "0.2.6"
+tract-data = "=0.21.4"
+
+[build-dependencies]
+cc = "1.0.69"
+half = { version = "2.2.1", features = ["std", "num-traits"] }
+liquid = "0.26"
+liquid-core = "0.26"
+smallvec = "1.6.1"
+unicode-normalization = "0.1.19"
+time = "0.3.23"
+walkdir = "2.3.2"
+
+[features]
+no_fp16 = []
+apple-amx-ios = []
+default = []
+complex = ["tract-data/complex"]
