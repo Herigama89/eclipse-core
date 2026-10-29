@@ -1,0 +1,3 @@
+Eclipse Core includes DeepFilterNet (https://github.com/Rikorose/DeepFilterNet)
+Copyright (c) Hendrik Schröter. Licensed under MIT OR Apache-2.0.
+The DeepFilterNet 3 model weights are distributed under the same terms.

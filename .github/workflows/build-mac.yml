@@ -1,0 +1,58 @@
+name: Build Mac plugins
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14            # Apple Silicon
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustc --version
+
+      - name: Cache Rust build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            build/cargo
+          key: rust-${{ runner.os }}-${{ hashFiles('ai/Cargo.toml', 'ai/src/**') }}
+          restore-keys: rust-${{ runner.os }}-
+
+      - name: Configure
+        run: cmake -B build -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build -j4
+
+      - name: Sign (ad-hoc) and package
+        run: |
+          OUT="build/NebulaClean_artefacts/Release"
+          mkdir -p dist
+          for b in "$OUT/VST3/Eclipse Core.vst3" "$OUT/AU/Eclipse Core.component"; do
+            codesign --force --deep --sign - "$b"
+            cp -R "$b" dist/
+          done
+          cp README.md THIRD_PARTY_LICENSES.txt dist/
+          cd dist && zip -r -y ../EclipseCore-mac-arm64.zip .
+
+      - name: Validate Audio Unit
+        continue-on-error: true
+        run: |
+          mkdir -p ~/Library/Audio/Plug-Ins/Components
+          cp -R "build/NebulaClean_artefacts/Release/AU/Eclipse Core.component" ~/Library/Audio/Plug-Ins/Components/
+          killall -9 AudioComponentRegistrar || true
+          auval -v aufx NbCl Nbla
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: EclipseCore-mac-arm64
+          path: EclipseCore-mac-arm64.zip

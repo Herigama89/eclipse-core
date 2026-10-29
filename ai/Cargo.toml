@@ -1,0 +1,19 @@
+[package]
+name = "eclipse_ai"
+version = "1.0.0"
+edition = "2021"
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+# DeepFilterNet 3 (MIT / Apache-2.0) - the trained model is embedded in the library
+deep_filter = { git = "https://github.com/Rikorose/DeepFilterNet", rev = "d375b2d8309e0935d165700c91da9de862a99c31", default-features = false, features = ["tract", "default-model"] }
+ndarray = "0.15"
+rubato = "0.14"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
