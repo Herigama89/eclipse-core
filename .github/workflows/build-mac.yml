@@ -6,7 +6,7 @@ on:
 
 jobs:
   build:
-    runs-on: macos-14            # Apple Silicon
+    runs-on: macos-15            # Apple Silicon
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
