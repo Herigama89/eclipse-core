@@ -11,6 +11,11 @@ crate-type = ["staticlib"]
 deep_filter = { git = "https://github.com/Rikorose/DeepFilterNet", rev = "d375b2d8309e0935d165700c91da9de862a99c31", default-features = false, features = ["tract", "default-model"] }
 ndarray = "0.15"
 rubato = "0.14"
+# Pin the neural-network runtime to the exact versions DeepFilterNet 0.5.x was built with
+tract-core = "=0.21.4"
+tract-onnx = "=0.21.4"
+tract-pulse = "=0.21.4"
+tract-hir = "=0.21.4"
 
 [profile.release]
 opt-level = 3
