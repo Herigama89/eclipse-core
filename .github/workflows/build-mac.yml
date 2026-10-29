@@ -5,6 +5,14 @@ on:
   workflow_dispatch:
 
 jobs:
+  ai-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile AI engine (Rust)
+        run: cd ai && cargo build --release
+
   build:
     runs-on: macos-15            # Apple Silicon
     timeout-minutes: 90
