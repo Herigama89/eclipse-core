@@ -11,7 +11,16 @@ if(APPLE)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "10.15" CACHE STRING "Minimum macOS version" FORCE)
 endif()
 
-project(NebulaClean VERSION 1.1.0)
+project(NebulaClean VERSION 1.2.0)
+
+# The VST3 manifest step runs the freshly built plugin; skip it when cross-compiling
+set(ECLIPSE_VST3_MANIFEST TRUE)
+if(APPLE AND DEFINED ECLIPSE_ARCH)
+    execute_process(COMMAND uname -m OUTPUT_VARIABLE _REAL_ARCH OUTPUT_STRIP_TRAILING_WHITESPACE)
+    if(NOT _REAL_ARCH STREQUAL ECLIPSE_ARCH)
+        set(ECLIPSE_VST3_MANIFEST FALSE)
+    endif()
+endif()
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -45,7 +54,8 @@ juce_add_plugin(NebulaClean
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
     COPY_PLUGIN_AFTER_BUILD     TRUE
     VST3_CATEGORIES             Fx Restoration
-    AU_MAIN_TYPE                kAudioUnitType_Effect)
+    AU_MAIN_TYPE                kAudioUnitType_Effect
+    VST3_AUTO_MANIFEST          ${ECLIPSE_VST3_MANIFEST})
 
 juce_add_binary_data(EclipseAssets SOURCES Assets/skin.jpg)
 
