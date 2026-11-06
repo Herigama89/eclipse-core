@@ -1,0 +1,52 @@
+name: Build Mac plugins (Apple Silicon, built on Intel runner)
+
+# Fallback for when GitHub's Apple Silicon runners are at capacity:
+# cross-compiles the arm64 plugin on an Intel Mac runner.
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build-cross:
+    runs-on: macos-15-intel
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain (+ Apple Silicon target)
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add aarch64-apple-darwin
+
+      - name: Configure (arm64)
+        run: |
+          set -o pipefail
+          cmake -B build -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release -DECLIPSE_ARCH=arm64 -DRust_CARGO_TARGET=aarch64-apple-darwin 2>&1 | tee configure.log || {
+            grep -iE "error" -A3 configure.log | head -20 | while IFS= read -r l; do echo "::error::$l"; done
+            exit 1; }
+
+      - name: Build
+        run: |
+          set -o pipefail
+          cmake --build build -j4 2>&1 | tee build.log || {
+            grep -E "error[: ]" build.log | head -20 | while IFS= read -r l; do echo "::error::$l"; done
+            exit 1; }
+
+      - name: Check architecture, sign (ad-hoc) and package
+        run: |
+          OUT="build/NebulaClean_artefacts/Release"
+          file "$OUT/AU/Eclipse Core.component/Contents/MacOS/Eclipse Core" | tee arch.txt
+          grep -q arm64 arch.txt || { echo "::error::binary is not arm64"; exit 1; }
+          mkdir -p dist
+          for b in "$OUT/VST3/Eclipse Core.vst3" "$OUT/AU/Eclipse Core.component"; do
+            codesign --force --deep --sign - "$b"
+            cp -R "$b" dist/
+          done
+          cp README.md THIRD_PARTY_LICENSES.txt dist/
+          cd dist && zip -r -y ../EclipseCore-mac-arm64.zip .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: EclipseCore-mac-arm64-crossbuilt
+          path: EclipseCore-mac-arm64.zip

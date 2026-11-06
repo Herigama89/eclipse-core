@@ -2,7 +2,11 @@ cmake_minimum_required(VERSION 3.22)
 
 # Build only for this Mac's processor (the Rust AI engine is compiled natively)
 if(APPLE)
-    execute_process(COMMAND uname -m OUTPUT_VARIABLE HOST_ARCH OUTPUT_STRIP_TRAILING_WHITESPACE)
+    if(DEFINED ECLIPSE_ARCH)            # cross-build, e.g. -DECLIPSE_ARCH=arm64 on an Intel Mac
+        set(HOST_ARCH "${ECLIPSE_ARCH}")
+    else()
+        execute_process(COMMAND uname -m OUTPUT_VARIABLE HOST_ARCH OUTPUT_STRIP_TRAILING_WHITESPACE)
+    endif()
     set(CMAKE_OSX_ARCHITECTURES "${HOST_ARCH}" CACHE STRING "" FORCE)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "10.15" CACHE STRING "Minimum macOS version" FORCE)
 endif()
