@@ -154,8 +154,11 @@ void NebulaAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
     p.delta        = false;
 
     // AI: NOISE sets how much it removes (capped by DEPTH); SMOOTH low = extra cleanup between words
-    const float aiDb = juce::jlimit (1.0f, 100.0f, juce::jmin (depthDb, 6.0f + 54.0f * noise));
-    const float pfBeta = 0.03f * (1.0f - smoothParam->load() * 0.01f);
+    // Gentle curve for a natural sound: 25 % ~ 6 dB, 50 % ~ 15 dB, 75 % ~ 27 dB, 100 % = up to DEPTH
+    const float aiDb = juce::jlimit (1.0f, 100.0f, juce::jmin (depthDb, 40.0f * std::pow (noise, 1.4f)));
+    // DeepFilterNet's extra post-filter thins the voice, so only use it when SMOOTH is turned down (< 30 %)
+    const float smoothAmt = smoothParam->load() * 0.01f;
+    const float pfBeta = smoothAmt < 0.3f ? 0.02f * (0.3f - smoothAmt) / 0.3f : 0.0f;
     const float aiTarget  = aiOn ? juce::jmin (1.0f, noise / 0.05f) : 0.0f;   // 0 % NOISE = untouched
     const float mixTarget = bypassed ? 0.0f : mixParam->load() * 0.01f;
     const float dTarget   = (! bypassed && deltaParam->load() > 0.5f) ? 1.0f : 0.0f;

@@ -11,9 +11,13 @@
 
     DE-NOISE  : minimum-tracking noise-floor estimator + decision-directed Wiener gain
                 (the classic Ephraim-Malah style approach, low "musical noise").
-    DE-REVERB : statistical late-reverb model (Lebart / Habets). The late tail at frame t
-                is predicted from the signal power ~50 ms earlier, attenuated by the
-                exponential decay of a room with the chosen T60 ("TAIL" knob).
+    DE-REVERB : late-reverb model driven by the *direct* voice (Habets-style recursion).
+                Each frame, the estimated dry voice feeds a reverb tail that decays at the
+                room's rate (TAIL = T60) and arrives after ~50 ms. Because only decaying
+                energy of the dry voice counts as reverb, sustained (sung) notes are no
+                longer mistaken for reverb. REVERB = how roomy the recording is.
+    SMOOTHING : decision-directed SNR with onset fast-path, ERB-width frequency smoothing
+                and millisecond-based release -> low "musical noise", no watery wobble.
     DELTA     : output = X * (1 - G)  -> you hear exactly what is being removed.
                 Normal + Delta always sum back to the original (null test).
 
@@ -61,6 +65,9 @@ public:
         tapBufN.assign ((size_t) fftSize, 0.0f);
         tapBufR.assign ((size_t) fftSize, 0.0f);
         history.assign ((size_t) maxHistory * (size_t) numBins, 0.0f);
+        lateRev.assign ((size_t) numBins, 0.0f);
+        dropping.assign ((size_t) numBins, 0.0f);
+        gainTmp.assign ((size_t) numBins + 1, 0.0f);
         reset();
     }
 
@@ -70,6 +77,13 @@ public:
         const double fps = sr / (double) hopSize;
         delayFrames = std::clamp ((int) std::lround (0.05 * fps), 1, maxHistory - 1);
         noiseRise   = (float) std::pow (10.0, (8.0 / 10.0) / fps);   // noise floor may rise 8 dB/s
+        hopSeconds  = (float) (hopSize / sr);
+        for (int k = 0; k < numBins; ++k)                              // ERB bandwidth in bins
+        {
+            const double f   = k * sr / fftSize;
+            const double erb = 24.7 * (4.37 * f / 1000.0 + 1.0);
+            erbBins[(size_t) k] = (float) (erb / (sr / fftSize));
+        }
         reset();
     }
 
@@ -83,6 +97,7 @@ public:
         std::fill (prevClean.begin(), prevClean.end(), 0.0f);
         std::fill (gainSm.begin(), gainSm.end(), 1.0f);
         std::fill (history.begin(), history.end(), 0.0f);
+        std::fill (lateRev.begin(), lateRev.end(), 0.0f);
         std::fill (tapBufN.begin(), tapBufN.end(), 0.0f);
         std::fill (tapBufR.begin(), tapBufR.end(), 0.0f);
         tapNoise = tapReverb = 0.0f;
@@ -136,18 +151,22 @@ private:
 
         const float floorGain = std::pow (10.0f, -params.depthDb / 20.0f);
         const float betaN     = 1.2f * params.noiseAmount + 1.3f * params.noiseAmount * params.noiseAmount * params.noiseAmount;
-        const float betaR     = 1.6f * params.reverbAmount;
+        // assumed reverb-to-direct energy ratio: 50 % ~ a normal room (DRR ~ +4 dB), 100 % ~ very roomy
+        const float rho       = params.reverbAmount <= 0.0f ? 0.0f : 0.40f * std::pow (2.0f * params.reverbAmount, 2.3f);
         const double decay    = 3.0 * std::log (10.0) / std::max (0.1, (double) params.tailSeconds);
-        const float revGain   = (float) std::exp (-2.0 * decay * (double) delayFrames * hopSize / sr);
-        const float dd        = 0.80f + 0.18f * params.smoothing;   // decision-directed factor
-        const float release   = 0.15f + 0.60f * params.smoothing;   // gain release smoothing
-        const float freqSm    = 0.50f * params.smoothing;
+        const float dFrame    = (float) std::exp (-2.0 * decay * hopSize / sr);          // power decay per frame
+        const float lateW     = (float) std::pow ((double) dFrame, (double) delayFrames); // energy surviving to "late"
+        const float feed      = rho * (1.0f - dFrame) * lateW;
+        const float sm        = params.smoothing;
+        const float dd        = 0.90f + 0.08f * sm;                                       // decision-directed factor
+        const float release   = std::exp (-hopSeconds / (0.005f + 0.025f * sm));         // 5..30 ms release
+        const float widthFrac = 0.6f * sm;                                                // fraction of an ERB
 
         const int oldIdx = (histPos - delayFrames + maxHistory) % maxHistory;
         float* histNow       = &history[(size_t) histPos * (size_t) numBins];
         const float* histOld = &history[(size_t) oldIdx  * (size_t) numBins];
 
-        // ---- pass 1: estimate noise + reverb, compute raw Wiener gain ----------
+        // ---- pass 1: estimate noise + late reverb, compute raw gain ------------
         for (int k = 0; k < numBins; ++k)
         {
             const float re = fftData[(size_t) (2 * k)], im = fftData[(size_t) (2 * k + 1)];
@@ -155,6 +174,7 @@ private:
             power[(size_t) k] = p;
 
             float& sp = smoothPow[(size_t) k];
+            const float spPrev = sp;
             sp = 0.6f * sp + 0.4f * p;
 
             float& ns = noiseSmooth[(size_t) k];              // heavily smoothed power for tracking
@@ -167,15 +187,49 @@ private:
             n = std::max (n, 1.0e-12f);
             const float noisePow = minStatBias * n;          // minimum -> mean bias compensation
 
-            const float rev = revGain * histOld[k];           // predicted late reverb
-            histNow[k] = sp;
+            // late reverb: decaying tail of the *direct* voice estimated ~50 ms ago
+            float& L = lateRev[(size_t) k];
+            L = dFrame * L + feed * histOld[k];
 
-            const float interf = betaN * noisePow + betaR * rev + 1.0e-12f;
+            // early tail (< 50 ms), only where the bin is dropping off (word endings),
+            // so sustained notes keep their body
+            float early = 0.0f, peak = 0.0f, w = 1.0f;
+            for (int j = 1; j < delayFrames; ++j)
+            {
+                const float dj = history[(size_t) ((histPos - j + maxHistory) % maxHistory) * (size_t) numBins + (size_t) k];
+                w *= dFrame;
+                early += w * dj;
+                peak = std::max (peak, dj);
+            }
+            const float q    = sp / (peak + 1.0e-12f);
+            const float drop = std::clamp ((0.5f - q) / 0.4f, 0.0f, 1.0f);
+            const float rev  = L + drop * rho * (1.0f - dFrame) * early;
+
+            const float interf = betaN * noisePow + rev + 1.0e-12f;
             shareN[(size_t) k] = betaN * noisePow / interf;
-            shareR[(size_t) k] = betaR * rev / interf;
+            shareR[(size_t) k] = rev / interf;
             const float post   = p / interf;
-            const float prio   = dd * prevClean[(size_t) k] / interf + (1.0f - dd) * std::max (post - 1.0f, 0.0f);
+            // smooth when the bin is steady; let go fast once the interference dominates (word endings)
+            const float ddk = post < 1.5f ? 0.5f : dd;
+            float prio = ddk * prevClean[(size_t) k] / interf + (1.0f - ddk) * std::max (post - 1.0f, 0.0f);
+            if (post > 8.0f && p > 2.0f * spPrev) prio = std::max (prio, post - 1.0f);   // true onsets only: never dull consonants
             gainRaw[(size_t) k] = std::max (prio / (1.0f + prio), floorGain);
+            dropping[(size_t) k] = drop;
+        }
+
+        // ---- frequency smoothing over a fraction of an ERB (box filter) --------
+        if (widthFrac > 0.0f)
+        {
+            gainTmp[0] = 0.0f;
+            for (int k = 0; k < numBins; ++k) gainTmp[(size_t) k + 1] = gainTmp[(size_t) k] + gainRaw[(size_t) k];
+            for (int k = 0; k < numBins; ++k)
+            {
+                const int hw = (int) (0.5f * widthFrac * erbBins[(size_t) k]);
+                if (hw <= 0) continue;
+                const int lo = std::max (0, k - hw), hi = std::min (numBins - 1, k + hw);
+                const float avg = (gainTmp[(size_t) hi + 1] - gainTmp[(size_t) lo]) / (float) (hi - lo + 1);
+                gainRaw[(size_t) k] = std::max (gainRaw[(size_t) k] * 0.35f + avg * 0.65f, floorGain);
+            }
         }
 
         // ---- per-frame parameter smoothing (click-free delta / mix / bypass) ---
@@ -185,14 +239,16 @@ private:
         // ---- pass 2: smooth gains, apply, feed analyzer ------------------------
         for (int k = 0; k < numBins; ++k)
         {
-            const float l = gainRaw[(size_t) std::max (k - 1, 0)];
-            const float r = gainRaw[(size_t) std::min (k + 1, numBins - 1)];
-            const float gf = (1.0f - freqSm) * gainRaw[(size_t) k] + freqSm * 0.5f * (l + r);
+            const float gf = gainRaw[(size_t) k];
 
             float& g = gainSm[(size_t) k];
-            g = gf > g ? gf : release * g + (1.0f - release) * gf;   // instant open, smooth close
+            const float rel = release * (1.0f - dropping[(size_t) k]);   // no hang-over at word endings
+            g = gf > g ? gf : rel * g + (1.0f - rel) * gf;               // instant open, smooth close
 
             prevClean[(size_t) k] = g * g * power[(size_t) k];
+            // direct-voice estimate (reverb removed) that will drive the reverb model
+            const float gr = std::min (1.0f, 1.0f - shareR[(size_t) k] * (1.0f - g));
+            histNow[k] = gr * gr * smoothPow[(size_t) k];
 
             const float m   = mixSm * g + (1.0f - mixSm);
             const float out = (1.0f - deltaSm) * m + deltaSm * (1.0f - m);
@@ -252,7 +308,9 @@ private:
     std::vector<float> window, inBuf, outBuf, fftData;
     std::vector<float> shareN, shareR, tapDataN, tapDataR, tapBufN, tapBufR;
     bool tapEnabled = false;
-    std::vector<float> power, smoothPow, noiseEst, noiseSmooth, prevClean, gainRaw, gainSm, history;
+    std::vector<float> power, smoothPow, noiseEst, noiseSmooth, prevClean, gainRaw, gainSm, history, lateRev, gainTmp, dropping;
+    std::array<float, numBins> erbBins {};
+    float hopSeconds = 512.0f / 48000.0f;
 
     Params params;
     double sr = 48000.0;

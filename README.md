@@ -5,9 +5,9 @@ One plugin, two cleaners, on a custom image skin (Assets/skin.jpg). The galaxy w
 ## Controls
 | Section | Knob | What it does |
 |---|---|---|
-| DE-NOISE | NOISE | How hard steady noise (hiss, hum, AC, fans, room tone) is removed. Gentle in the first half, aggressive near 10. |
-| | SMOOTH | Artifact control. Higher = smoother, fewer "watery" artifacts; lower = faster, more precise. |
-| DE-REVERB | REVERB | How much of the room's reverb tail is removed. |
+| DE-NOISE | NOISE | How much noise is removed. Gentle curve: 25 % ≈ 6 dB, 50 % ≈ 15 dB, 75 % ≈ 27 dB (AI on). |
+| | SMOOTH | Higher = smoother and more natural (default). Below 30 % adds extra cleanup between words. |
+| DE-REVERB | REVERB | How roomy the recording is. Only the decaying room tail is removed, so sustained/sung notes keep their body. |
 | | TAIL | The room's decay time (T60). Match it to the room: small room ~0.3–0.6 s, hall 1.5–3 s. |
 | OUTPUT | DEPTH | Maximum reduction (dB). Lower = more natural, higher = more complete removal. |
 | | MIX | Dry/wet. |
@@ -18,6 +18,12 @@ One plugin, two cleaners, on a custom image skin (Assets/skin.jpg). The galaxy w
 Window is resizable (drag the corner). Double-click any knob to reset it.
 
 **Workflow tip:** press AMBIENT, raise NOISE / REVERB until you start hearing voice in the ambient signal, then back off a little.
+
+## v1.2 sound-quality update
+- New de-reverb model: reverb is predicted from the decay of the *dry voice*, so long sung notes are
+  no longer treated as reverb (voice loss on a sustained note at 50 %: 4.9 dB -> 1.7 dB).
+- 2-4x less gain wobble ("watery" artifacts), faster clean-up right after words end.
+- AI: gentler DE-NOISE curve and the post-filter only below SMOOTH 30 % -> more natural voice.
 
 ## AI engine
 The AI ENGINE button (on by default) runs **DeepFilterNet 3**, an open-source neural network trained on
