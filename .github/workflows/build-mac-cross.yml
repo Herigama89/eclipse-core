@@ -10,6 +10,8 @@ jobs:
   build-cross:
     runs-on: macos-15-intel
     timeout-minutes: 90
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
     steps:
       - uses: actions/checkout@v4
 
@@ -30,8 +32,7 @@ jobs:
         run: |
           set -o pipefail
           cmake --build build -j4 2>&1 | tee build.log || {
-            grep -E "(^|[^a-z_])(error(\[E[0-9]+\])?:|Error [0-9]|fatal error|ld: |undefined symbol|CMake Error)" build.log | grep -v "^warning" | head -25 | while IFS= read -r l; do echo "::error::$l"; done
-            grep -B2 -A12 -m1 -E "^error(\[E[0-9]+\])?:" build.log | head -15 | while IFS= read -r l; do echo "::warning::$l"; done
+            grep -v -E "warning" build.log | grep -E -i -A6 "undefined symbols|ld: error|clang: error|error:|\*\*\* \[|cmake error" | head -60 > err.txt; echo "::error::$(sed -e 's/%/%25/g' err.txt | awk '{printf "%s%%0A", $0}')"
             exit 1; }
 
       - name: Check architecture, sign (ad-hoc) and package
